@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "treasury-invite",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "account_id": "6d47dd0fc8dc517ddb1e6d178cc247bb",
+  // public/og-banner.png is served straight from Static Assets; every other
+  // path falls through to the Worker.
+  "assets": { "directory": "public" },
+  // Public values. SUPABASE_ANON_KEY is a secret: `npx wrangler secret put SUPABASE_ANON_KEY`.
+  "vars": {
+    "SUPABASE_URL": "https://ccwuarepmqqpqjmfdmut.supabase.co",
+    "ANDROID_SHA256_FINGERPRINT": "09:DA:4B:95:59:B2:A7:11:EE:56:12:C6:F9:AD:4B:50:D1:59:86:11:13:BC:27:6D:57:7E:E8:61:CC:EB:F4:EA"
+  },
+  // Sits in front of the existing proxied DNS record for invite.getzaldo.com,
+  // so the record's target no longer matters. Remove this route to roll back.
+  "routes": [{ "pattern": "invite.getzaldo.com/*", "zone_name": "getzaldo.com" }],
+  "workers_dev": true,
+  "observability": { "enabled": true }
+}

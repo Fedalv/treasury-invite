@@ -1,10 +1,20 @@
+// Cloudflare Worker bindings: plain vars come from wrangler.jsonc, and
+// SUPABASE_ANON_KEY is a secret set with `wrangler secret put`.
+interface Env {
+  SUPABASE_URL?: string;
+  SUPABASE_ANON_KEY?: string;
+  OG_IMAGE_URL?: string;
+  ANDROID_SHA256_FINGERPRINT?: string;
+}
+
 // Resolve a short invite code to its group via the Supabase RPC. Returns
 // { group_id, name } or null (unknown/archived code, or env not configured).
 async function resolveInvite(
   code: string,
+  env: Env,
 ): Promise<{ group_id: string; name: string } | null> {
-  const base = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_ANON_KEY");
+  const base = env.SUPABASE_URL;
+  const key = env.SUPABASE_ANON_KEY;
   if (!base || !key) return null;
   try {
     const r = await fetch(`${base}/rest/v1/rpc/get_invite_info`, {
@@ -42,7 +52,7 @@ const WEB_APP_URL = "https://getzaldo.com";
 const webInviteUrl = (groupId: string, groupName: string) =>
   `${WEB_APP_URL}?group=${groupId}&name=${encodeURIComponent(groupName)}`;
 
-Deno.serve(async (req) => {
+async function handle(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
 
   // Android App Links verification: the OS fetches this file when installing/updating
@@ -51,7 +61,7 @@ Deno.serve(async (req) => {
   //   keytool -list -v -keystore release.jks -alias <alias>
   // or from the Play Console > Setup > App integrity > App signing key certificate.
   if (url.pathname === "/.well-known/assetlinks.json") {
-    const fingerprint = Deno.env.get("ANDROID_SHA256_FINGERPRINT");
+    const fingerprint = env.ANDROID_SHA256_FINGERPRINT;
     const assetlinks = [{
       relation: ["delegate_permission/common.handle_all_urls"],
       target: {
@@ -68,19 +78,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Open Graph share image, served from this same service so the invite link is
-  // self-contained (no dependency on the Flutter web app being deployed). The
-  // module-relative fetch works both locally (file://) and on Deno Deploy
-  // (https module URL).
-  if (url.pathname === "/og-banner.png") {
-    const asset = await fetch(new URL("./og-banner.png", import.meta.url));
-    return new Response(asset.body, {
-      headers: {
-        "content-type": "image/png",
-        "cache-control": "public, max-age=86400",
-      },
-    });
-  }
+  // /og-banner.png is not handled here: it lives in public/ and Workers Static
+  // Assets serves it before this code runs (the ?g= query is ignored when
+  // matching). Its cache headers are set in public/_headers.
 
   // Two link formats are supported:
   //   New (pretty):  /<code>           — 8-char base62, resolved via Supabase
@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
 
   const code = url.pathname.replace(/^\/+|\/+$/g, "");
   if (!groupId && /^[A-Za-z0-9]{8}$/.test(code)) {
-    const info = await resolveInvite(code);
+    const info = await resolveInvite(code, env);
     if (info) {
       groupId = info.group_id;
       groupName = info.name;
@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
   // — a shared URL gets deduped and repeats render as a small thumbnail. A
   // unique ?g=<id> gives each group its own cached (large) card. The banner
   // route matches on pathname only, so the query is ignored when serving.
-  const ogImageBase = Deno.env.get("OG_IMAGE_URL") ?? `${url.origin}/og-banner.png`;
+  const ogImageBase = env.OG_IMAGE_URL ?? `${url.origin}/og-banner.png`;
   const ogImage = `${ogImageBase}${ogImageBase.includes("?") ? "&" : "?"}g=${encodeURIComponent(groupId)}`;
   const ogTitle = `Join ${groupName} on Zaldo`;
   const ogDesc =
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
   <meta name="twitter:title" content="${esc(ogTitle)}">
   <meta name="twitter:description" content="${esc(ogDesc)}">`;
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const supabaseUrl = env.SUPABASE_URL ?? "";
   const apkUrl = supabaseUrl
     ? `${supabaseUrl}/storage/v1/object/public/releases/treasury-latest.apk`
     : null;
@@ -329,4 +329,8 @@ Deno.serve(async (req) => {
       "Cache-Control": "no-store",
     },
   });
-});
+}
+
+export default {
+  fetch: (req: Request, env: Env) => handle(req, env),
+};
